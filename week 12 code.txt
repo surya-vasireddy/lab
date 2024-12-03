@@ -1,0 +1,67 @@
+// Import necessary libraries for Spark 1.6.0
+import org.apache.spark.mllib.fpm.FPGrowth
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.SparkContext
+
+// Create SparkContext
+val sc = new SparkContext("local", "FP-Growth")
+
+// Create SQLContext (necessary for DataFrame operations in Spark 1.6.0)
+val sqlContext = new SQLContext(sc)
+
+// Create synthetic data as RDD of Array[String]
+val transactions: RDD[Array[String]] = sc.parallelize(Seq(
+  Array("apple", "banana", "cherry"),
+  Array("apple", "cherry"),
+  Array("banana", "cherry"),
+  Array("apple", "banana", "cherry", "date"),
+  Array("apple", "banana")
+))
+
+// Initialize the FP-Growth model with minimum support threshold
+val fpgrowth = new FPGrowth()
+  .setMinSupport(0.2)       // Minimum support threshold
+
+// Train the FP-Growth Model using the transactions RDD
+val model = fpgrowth.run(transactions)
+
+// Display the frequent itemsets
+println("Frequent Itemsets:")
+model.freqItemsets.collect().foreach { itemset =>
+  println(s"Itemset: ${itemset.items.mkString(", ")} | Frequency: ${itemset.freq}")
+}
+
+// (Optional) Display predictions for transactions
+println("Predictions for Transactions:")
+val predictions = model.transform(transactions)
+predictions.collect().foreach { prediction =>
+  println(s"Transaction: ${prediction.mkString(", ")}")
+}
+
+// Manually generate association rules from frequent itemsets (if needed)
+println("Generated Association Rules (with Confidence Calculation):")
+val freqItemsets = model.freqItemsets.collect()
+
+// Generate association rules from frequent itemsets
+freqItemsets.foreach { itemset =>
+  // Generate possible association rules (splitting itemset into antecedent and consequent)
+  val items = itemset.items
+  if (items.length > 1) {
+    // Create all possible antecedents and consequents
+    for (i <- 1 until (1 << items.length)) {
+      val antecedent = items.filter((items.indexOf(_) & i) != 0)
+      val consequent = items.filter((items.indexOf(_) & i) == 0)
+     
+      if (antecedent.nonEmpty && consequent.nonEmpty) {
+        // Calculate confidence: confidence = support(antecedent ∪ consequent) / support(antecedent)
+        val antecedentSupport = model.freqItemsets.filter(.items.toSet == antecedent.toSet).map(.freq).headOption.getOrElse(0.0)
+        val ruleSupport = model.freqItemsets.filter(.items.toSet == antecedent.toSet.union(consequent.toSet)).map(.freq).headOption.getOrElse(0.0)
+        val confidence = if (antecedentSupport > 0) ruleSupport / antecedentSupport else 0.0
+       
+        // Print the rule and its confidence
+        println(s"Antecedent: ${antecedent.mkString(", ")} => Consequent: ${consequent.mkString(", ")} | Confidence: $confidence")
+      }
+    }
+  }
+}
