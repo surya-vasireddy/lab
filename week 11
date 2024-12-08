@@ -1,0 +1,70 @@
+// Import Libraries
+import org.apache.spark.mllib.recommendation.{ALS, Rating}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.evaluation.RegressionMetrics
+
+// Create Spark Session (Not needed in Spark 1.6.0 shell, but for script completeness)
+val spark = SparkSession.builder().appName("Collaborative Filtering").getOrCreate()
+
+// Create Synthetic Data (User, Movie, Rating) - Embedding dataset directly in code
+val ratingsData = Seq(
+  Rating(0, 0, 5.0),
+  Rating(0, 1, 3.0),
+  Rating(0, 2, 4.0),
+  Rating(1, 0, 3.0),
+  Rating(1, 1, 5.0),
+  Rating(1, 2, 1.0),
+  Rating(2, 0, 2.0),
+  Rating(2, 1, 4.0),
+  Rating(2, 2, 5.0),
+  Rating(3, 0, 4.0),
+  Rating(3, 1, 4.0),
+  Rating(3, 2, 2.0)
+)
+
+// Convert to RDD
+val ratingsRDD: RDD[Rating] = sc.parallelize(ratingsData)
+
+// Split Data into Training and Testing Sets (80% train, 20% test)
+val Array(trainingData, testData) = ratingsRDD.randomSplit(Array(0.8, 0.2))
+
+// Initialize ALS Model (using the old MLlib API in Spark 1.6.0)
+val als = new ALS()
+  .setRank(10)         // Number of latent factors
+  .setIterations(10)   // Number of iterations
+  .setLambda(0.1)      // Regularization parameter
+  .setAlpha(1.0)       // Confidence parameter
+  .setSeed(42)         // Random seed for reproducibility
+
+// Train the ALS Model
+val model = als.run(trainingData)
+
+// Make Predictions
+val predictions = model.predict(testData.map(rating => (rating.user, rating.product)))
+  .map { case Rating(user, product, rating) => ((user, product), rating) }
+  .join(testData.map { case Rating(user, product, rating) => ((user, product), rating) })
+  .map { case ((user, product), (predictedRating, actualRating)) => (actualRating, predictedRating) }
+
+// Evaluate the Model using RMSE (Root Mean Squared Error)
+val metrics = new RegressionMetrics(predictions)
+val rmse = metrics.rootMeanSquaredError
+println(s"Root-mean-square error = $rmse")
+
+// Recommend Top Movies for Each User (5 recommendations per user)
+val userRecs = model.recommendProductsForUsers(5)
+userRecs.collect().foreach { case (user, recs) =>
+  println(s"User: $user")
+  recs.foreach { case Rating(product, _, rating) =>
+    println(s"  Movie: $product, Predicted Rating: $rating")
+  }
+}
+
+// Recommend Top Users for Each Movie (5 recommendations per movie)
+val movieRecs = model.recommendUsersForProducts(5)
+movieRecs.collect().foreach { case (movie, recs) =>
+  println(s"Movie: $movie")
+  recs.foreach { case Rating(user, _, rating) =>
+    println(s"  User: $user, Predicted Rating: $rating")
+  }
+}
